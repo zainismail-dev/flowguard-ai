@@ -1,0 +1,179 @@
+{
+  "name": "FlowGuard AI - Automation Failure Detective",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "flowguard-diagnose",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "flowguard-webhook",
+      "name": "Receive Error Report",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -600,
+        200
+      ],
+      "webhookId": "flowguard-diagnose-webhook"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const body = $json.body && typeof $json.body === 'object' && !Array.isArray($json.body) ? $json.body : {};\nconst errors = [];\nif (typeof body.platform !== 'string' || !body.platform.trim()) errors.push('platform is required');\nif (typeof body.error_message !== 'string' || !body.error_message.trim()) errors.push('error_message is required');\nlet status = null;\nif (body.http_status !== undefined && body.http_status !== null && body.http_status !== '') { const n = Number(body.http_status); if (Number.isInteger(n) && n >= 100 && n <= 599) status = n; else errors.push('http_status must be an integer from 100 to 599'); }\nconst clean = v => typeof v === 'string' && v.trim() ? v.trim().slice(0, 1000) : null;\nreturn { json: { valid: errors.length === 0, errors, incident: { incident_id: clean(body.incident_id) || 'FG-' + Date.now(), platform: clean(body.platform), error_message: clean(body.error_message), http_status: status, workflow_name: clean(body.workflow_name), expected_result: clean(body.expected_result), actual_result: clean(body.actual_result) } } };"
+      },
+      "id": "flowguard-validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "flowguard-valid-condition",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "flowguard-if",
+      "name": "Is Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const inc = $json.incident;\nconst s = inc.http_status;\nconst msg = (inc.error_message || '').toLowerCase();\nlet category = 'unknown', severity = 'low', confidence = 'low';\nlet likely_cause = 'Insufficient evidence to identify a likely cause.';\nlet recommended_actions = ['Collect the complete error response without secrets', 'Check the HTTP status and reproduce the issue', 'Review the failing workflow step and its input data'];\nconst evidence = [];\nif (s === 401) { category='authentication'; severity='high'; confidence='high'; likely_cause='The credential may be invalid, expired, revoked, or incorrectly configured.'; recommended_actions=['Reconnect or re-authenticate the credential','Check whether the token expired or was rotated','Confirm the correct credential is used']; evidence.push('HTTP 401 was reported'); }\nelse if (s === 403) { category='permission'; severity='high'; confidence='high'; likely_cause='The account may lack permission or the required access scope.'; recommended_actions=['Review account permissions and scopes','Confirm access to the target resource','Reconnect with the required permissions if needed']; evidence.push('HTTP 403 was reported'); }\nelse if (s === 404) { category='not_found'; severity='medium'; confidence='high'; likely_cause='The endpoint URL may be incorrect or the requested resource may not exist.'; recommended_actions=['Verify the endpoint URL and API version','Check the resource ID','Confirm the resource was not renamed or deleted']; evidence.push('HTTP 404 was reported'); }\nelse if (s === 429) { category='rate_limit'; severity='medium'; confidence='high'; likely_cause='The service may be limiting requests because too many were sent in a short period.'; recommended_actions=['Retry with exponential backoff','Reduce request frequency or batch requests','Check rate limits and the Retry-After header']; evidence.push('HTTP 429 was reported'); }\nelse if (s !== null && s >= 500) { category='server_error'; severity='high'; confidence='medium'; likely_cause='The target service may have a server-side error or be overloaded.'; recommended_actions=['Check the provider status page','Retry later with backoff','Contact the provider if the error persists']; evidence.push('An HTTP 5xx status was reported'); }\nelse if (/timeout|timed out|deadline exceeded|etimedout/.test(msg)) { category='timeout'; severity='medium'; confidence='medium'; likely_cause='The request may be timing out due to latency or connectivity problems.'; recommended_actions=['Check connectivity and service latency','Adjust the timeout if appropriate','Add retries with backoff']; evidence.push('The error message mentions a timeout'); }\nelse if (/missing|required field|is required|invalid payload|cannot be empty/.test(msg)) { category='invalid_payload'; severity='medium'; confidence='medium'; likely_cause='A required field may be missing or invalid in the request payload.'; recommended_actions=['Identify the missing or invalid field','Check upstream values for null or empty data','Validate the payload before sending it']; evidence.push('The error message suggests a payload problem'); }\nreturn { json: { incident_id: inc.incident_id, platform: inc.platform, workflow_name: inc.workflow_name, category, severity, likely_cause, evidence, confirmed_facts: ['Platform reported: '+inc.platform,'Error reported: '+inc.error_message,...(s !== null ? ['HTTP status reported: '+s] : [])], recommended_actions, confidence, impact_verified: false, disclaimer: 'This is a rule-based diagnosis, not a confirmed root cause.', status: 'diagnosed', diagnosed_at: new Date().toISOString() } };"
+      },
+      "id": "flowguard-diagnose",
+      "name": "Diagnose Incident",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "flowguard-respond-ok",
+      "name": "Respond 200 Report",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        360,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: 'invalid_request', error: 'Missing or invalid required fields', details: $json.errors, required_fields: ['platform', 'error_message'] } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "flowguard-respond-invalid",
+      "name": "Respond 400 Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        120,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Receive Error Report": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Diagnose Incident",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diagnose Incident": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "flowguard-import-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
