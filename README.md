@@ -4,6 +4,8 @@
 ![JavaScript](https://img.shields.io/badge/logic-JavaScript-F7DF1E?logo=javascript&logoColor=black)
 ![Status](https://img.shields.io/badge/status-prototype-blue)
 
+![FlowGuard AI overview](docs/overview.png)
+
 FlowGuard AI is an n8n workflow that diagnoses failed automations. Send it an error report through a webhook and it validates the input, classifies the failure, and returns a structured JSON diagnosis with a likely cause, severity, and recommended next steps.
 
 It is designed for teams running integrations (e-commerce, CRM, payment and SaaS sync workflows) who want a consistent first-pass triage instead of reading raw error logs every time something breaks.
